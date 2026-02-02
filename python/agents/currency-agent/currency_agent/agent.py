@@ -1,5 +1,8 @@
 import logging
 import os
+import uvicorn
+import google.auth.transport.requests
+import google.oauth2.id_token
 
 from dotenv import load_dotenv
 from google.adk.a2a.utils.agent_to_a2a import to_a2a
@@ -22,19 +25,37 @@ SYSTEM_INSTRUCTION = (
 logger.info("--- 🔧 Loading MCP tools from MCP Server... ---")
 logger.info("--- 🤖 Creating ADK Currency Agent... ---")
 
+# 1. Pre-calculate static values outside the callback for performance
+_MCP_URL = os.getenv("MCP_SERVER_URL", "http://localhost:8080/mcp")
+_AUDIENCE = _MCP_URL.split('/mcp/')[0]
+_AUTH_REQUEST = google.auth.transport.requests.Request()
+
+def get_auth_headers(_=None) -> dict[str, str]:
+
+    try:
+        id_token = google.oauth2.id_token.fetch_id_token(_AUTH_REQUEST, _AUDIENCE)
+        
+        logger.info("--- 🔧 MCP Auth: Token refreshed ---")
+        return {"Authorization": f"Bearer {id_token}"}
+        
+    except Exception as e:
+        logger.error(f"--- ❌ MCP Auth Error: Failed to fetch token: {e} ---")
+        return {}
+
+# Usage remains the same
+mcp_tools = MCPToolset(
+    connection_params=StreamableHTTPConnectionParams(url=_MCP_URL),
+    header_provider=get_auth_headers 
+)
+
 root_agent = LlmAgent(
-    model="gemini-2.5-flash",
+    model="gemini-2.5-pro",
     name="currency_agent",
     description="An agent that can help with currency conversions",
     instruction=SYSTEM_INSTRUCTION,
-    tools=[
-        MCPToolset(
-            connection_params=StreamableHTTPConnectionParams(
-                url=os.getenv("MCP_SERVER_URL", "http://localhost:8080/mcp")
-            )
-        )
-    ],
+    tools=[mcp_tools],
 )
 
 # Make the agent A2A-compatible
-a2a_app = to_a2a(root_agent, port=10000)
+# a2a_app = to_a2a(root_agent, port=10000)
+
